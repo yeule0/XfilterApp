@@ -1,5 +1,6 @@
 package com.yeule0.xfilterapp
 
+import androidx.core.view.WindowCompat
 import android.annotation.SuppressLint
 import android.content.Intent
 import android.os.Bundle
@@ -33,6 +34,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
