@@ -36,7 +36,7 @@ The official X app can sometimes be resource-intensive. This project aims to off
     *   Navigate to and select the cloned project directory.
     *   Allow Gradle to sync and build the project structure.
 
-4.  **⭐ CRITICAL STEP: Update JavaScript Selectors ⭐**
+4.  **CRITICAL STEP: Update JavaScript Selectors**
 
     This app injects JavaScript into the X mobile website to perform filtering. Because X frequently changes its website code, the **CSS selectors used to identify elements (especially Ads and the main timeline) will break over time.**
 
