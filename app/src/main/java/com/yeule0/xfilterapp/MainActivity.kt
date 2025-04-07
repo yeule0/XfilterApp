@@ -8,10 +8,10 @@ import android.util.Log
 import android.view.View
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.widget.ImageButton
 import android.widget.ProgressBar
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import com.google.android.material.floatingactionbutton.FloatingActionButton
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -19,6 +19,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
+    private lateinit var settingsButton: ImageButton // Changed from FloatingActionButton
     private var siteUrl = "https://mobile.twitter.com" // Or mobile.x.com
     private var isWebViewLoaded = false
 
@@ -41,8 +42,8 @@ class MainActivity : AppCompatActivity() {
         progressBar = findViewById(R.id.progressBar)
         setupWebView()
 
-        val fab: FloatingActionButton = findViewById(R.id.fabSettings)
-        fab.setOnClickListener {
+        settingsButton = findViewById(R.id.buttonSettingsEdge) // Updated ID and type
+        settingsButton.setOnClickListener {
             val intent = Intent(this, SettingsActivity::class.java)
             settingsResultLauncher.launch(intent)
         }
@@ -55,7 +56,7 @@ class MainActivity : AppCompatActivity() {
             webView.restoreState(savedInstanceState)
             isWebViewLoaded = savedInstanceState.getBoolean("webViewLoaded", false)
 
-            if(isWebViewLoaded){
+            if (isWebViewLoaded) {
                 applySettingsToWebView()
             }
         }
@@ -70,9 +71,7 @@ class MainActivity : AppCompatActivity() {
         webView.settings.useWideViewPort = true
         webView.settings.userAgentString = webView.settings.userAgentString.replace("; wv", "").replace("Version\\/\\d+\\.\\d+", "")
 
-
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
-
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -104,32 +103,25 @@ class MainActivity : AppCompatActivity() {
         injectJavascript(settings)
     }
 
-
-    //  injectJavascript
     private fun injectJavascript(settings: SettingsManager.FilterSettings) {
         val flagsJson = JSONArray(settings.flagsToHide).toString()
         val wordsJson = JSONArray(settings.wordsToHide).toString()
 
-        // Set desired debounce delay here
         val debounceDelayMs = 300
 
         val script = """
         javascript:(function() {
-            // --- START OF INJECTED SCRIPT ---
-
             const XFILTER_PREFIX = 'xfilter-mobile';
             const DEBOUNCE_DELAY = ${debounceDelayMs}; 
             let currentSettings = {};
 
             const SELECTORS = {
-                 // AD SELECTORS
-                 adIndicatorContainer: '', // Not using a specific container selector
-                 adIndicatorText:      'span.css-1jxf684.r-bcqeeo', // USING CLASSES FOUND. Adjust or fallback to 'span' if needed.
-                 // END AD SELECTORS
+                 adIndicatorContainer: '',
+                 adIndicatorText:      'span.css-1jxf684.r-bcqeeo',
                  tweet:                  '[data-testid="tweet"]', 
                  tweetUsernameWrapper:   '[data-testid="UserName"]',
                  tweetDisplayname:       '[data-testid="UserName"] span',
-                 tweetUserAvatarContainer: '.css-175oi2r.r-18kxxzh.r-1wron08.r-onrtq4.r-1awozwy', // Kept for IRC
+                 tweetUserAvatarContainer: '.css-175oi2r.r-18kxxzh.r-1wron08.r-onrtq4.r-1awozwy',
                  tweetPhoto:             '[data-testid="tweetPhoto"], [aria-label="Image"], [data-testid="testCondensedMedia"]',
                  tweetCardImage:         '[data-testid="article-cover-image"], [data-testid="card.layoutSmall.media"], [data-testid="card.layoutLarge.media"], a[href*="photo"] > div, [style*="padding-bottom: 56.25%"]',
                  tweetVideo:             '[data-testid="videoPlayer"]',
@@ -137,7 +129,6 @@ class MainActivity : AppCompatActivity() {
                  otherBadges:            'div[data-testid="User-Name"] img:not([src*="profile_images"])'
              };
 
-            // UTILITY FUNCTIONS 
             function log(...args) { console.log("XFilter:", ...args); }
             function warn(...args) { console.warn("XFilter:", ...args); }
             function error(...args) { console.error("XFilter:", ...args); }
@@ -148,7 +139,7 @@ class MainActivity : AppCompatActivity() {
                 return tag;
             }
 
-            function debounce(func, wait) { // Define debounce utility
+            function debounce(func, wait) {
                 let timeout;
                 return function (...args) {
                     const context = this;
@@ -158,45 +149,35 @@ class MainActivity : AppCompatActivity() {
                 };
             }
 
-            // STYLE TAGS 
             const ircStyleTag = ensureStyleTag('xfilter-irc-style');
 
-            // CORE LOGIC FUNCTIONS
             function filterSingleTweet(tweet) {
                 if (tweet.hasAttribute('data-' + XFILTER_PREFIX + '-processed') || tweet.style.display === 'none') return;
                  tweet.setAttribute('data-' + XFILTER_PREFIX + '-processed', 'true');
                  let shouldHide = false; let reason = '';
 
-                 // AD FILTERING 
                  if (!shouldHide && currentSettings.filterAds) {
                       if (SELECTORS.adIndicatorText) { 
                           try {
-                              
                               const adSpans = tweet.querySelectorAll(SELECTORS.adIndicatorText);
                               for (let adSpan of adSpans) {
-                                  // Check the exact text content
                                   if (adSpan && (adSpan.textContent || "").trim() === 'Ad') {
-                                      // Check if the span is actually visible (not hidden by other means)
                                       if (adSpan.offsetParent !== null) {
                                           shouldHide = true;
                                           reason = 'Ad Span Text';
-                                          log("Ad detected via text:", tweet); // Add log for successful detection
-                                          break; // Found an ad, no need to check further spans
+                                          log("Ad detected via text:", tweet);
+                                          break;
                                       }
                                   }
                               }
                           } catch(e) { error("Error during ad querySelectorAll:", e, "Selector:", SELECTORS.adIndicatorText); }
                       }
-                      // Fallback: Check aria-label on the main tweet element if span check fails
                       if (!shouldHide && tweet.matches('[aria-label*="Ad"]')) {
                            shouldHide = true; reason = 'Ad Aria Label';
-                           log("Ad detected via aria-label:", tweet); // Add log
+                           log("Ad detected via aria-label:", tweet);
                       }
                   }
-                  // END AD FILTERING LOGIC 
 
-
-                 // Flag/Word Filtering
                  if (!shouldHide && (currentSettings.flagsToHide?.length > 0 || currentSettings.wordsToHide?.length > 0)) {
                       const userNameWrapper = tweet.querySelector(SELECTORS.tweetUsernameWrapper);
                       if (userNameWrapper) {
@@ -218,7 +199,6 @@ class MainActivity : AppCompatActivity() {
              }
 
              function runTweetFilters() {
-                 // log("Running tweet filters..."); 
                  let count = 0;
                  try {
                      const tweets = document.querySelectorAll(SELECTORS.tweet);
@@ -226,35 +206,26 @@ class MainActivity : AppCompatActivity() {
                          tweet.removeAttribute('data-' + XFILTER_PREFIX + '-processed');
                          filterSingleTweet(tweet); count++;
                      });
-                     // log('Processed ' + count + ' potential tweets.'); 
                  } catch (e) { error("Error during tweet filtering:", e); }
              }
 
              function applyIRCModeStyles() {
-                 // log("--- applyIRCModeStyles called ---"); 
                  let css = '';
-                 // log("Current IRC setting:", currentSettings.ircMode); 
                  if (currentSettings.ircMode) {
                      const hideSelectors = [ SELECTORS.tweetUserAvatarContainer, SELECTORS.tweetPhoto, SELECTORS.tweetCardImage, SELECTORS.tweetVideo ].filter(Boolean).join(',\n');
                      if (hideSelectors) { css += hideSelectors + ' { display: none !important; }'; }
                      css += ' div[data-testid="User-Name"][data-irc-preserve] { display: inline-flex !important; align-items: center !important; visibility: visible !important; vertical-align: text-bottom; }';
                      css += ' div[data-testid="User-Name"][data-irc-preserve] ' + SELECTORS.verifiedBadge + ',';
                      css += ' div[data-testid="User-Name"][data-irc-preserve] ' + SELECTORS.otherBadges + ' { display: inline !important; visibility: visible !important; opacity: 1 !important; height: 1em; width: auto; }';
-                     // log("Applying IRC Mode CSS. Generated CSS length:", css.length); 
-                 } else { /* log("Removing IRC Mode CSS."); */ } 
+                 }
                  if (ircStyleTag.textContent !== css) { ircStyleTag.textContent = css; log("IRC Style Tag Updated.");}
-
-                 if (currentSettings.ircMode) { /* ... apply data-irc-preserve attributes ... */ } else { /* ... remove data-irc-preserve attributes ... */ }
              }
 
             function processPageChanges() {
-                 // log("Processing page changes (core)..."); 
                  runTweetFilters();
                  applyIRCModeStyles();
-                 // log("Page processing complete (core)."); 
             }
 
-            
             const debouncedProcessPage = debounce(processPageChanges, DEBOUNCE_DELAY);
 
             let observer = null;
@@ -286,10 +257,7 @@ class MainActivity : AppCompatActivity() {
                 } catch (e) { error("Failed to start Mutation Observer:", e); }
             }
             function stopObserver() { if (observer) { observer.disconnect(); observer = null; log("Mutation observer stopped."); } }
-            
 
-
-            // GLOBAL FUNCTION 
             window.applyXFilterSettings = function(flags, words, filterAds, ircMode) {
                  const newSettings = { flagsToHide: flags || [], wordsToHide: words || [], filterAds: filterAds, ircMode: ircMode };
                  let settingsChanged = JSON.stringify(currentSettings) !== JSON.stringify(newSettings);
@@ -307,7 +275,6 @@ class MainActivity : AppCompatActivity() {
                  startObserver();
             };
 
-            // SCRIPT INITIALIZATION 
              if (!window.xFilterInitialized) {
                  window.xFilterInitialized = true;
                  log("XFilter: Initializing script...");
@@ -317,11 +284,9 @@ class MainActivity : AppCompatActivity() {
                   log("XFilter: Script already initialized. Re-applying settings.");
                   window.applyXFilterSettings(${flagsJson}, ${wordsJson}, ${settings.filterAds}, ${settings.ircMode});
              }
-
         })();
         """.trimIndent()
 
-        // Execute the script
         webView.post { webView.evaluateJavascript(script, null) }
     }
 
