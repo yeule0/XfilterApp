@@ -1,5 +1,11 @@
 package com.yeule0.xfilterapp
 
+
+import android.app.Activity
+import android.net.Uri
+import android.webkit.ValueCallback
+import androidx.activity.result.ActivityResult
+
 import androidx.core.view.WindowCompat
 import android.annotation.SuppressLint
 import android.content.Intent
@@ -19,9 +25,19 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
-    private lateinit var settingsButton: ImageButton // Changed from FloatingActionButton
-    private var siteUrl = "https://mobile.twitter.com" // Or mobile.x.com
+    private lateinit var settingsButton: ImageButton
+    private var siteUrl = "https://mobile.twitter.com"
     private var isWebViewLoaded = false
+
+
+    private var filePathCallback: ValueCallback<Array<Uri>>? = null
+    private val fileChooserActivityResultLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result: ActivityResult ->
+        handleFileChooserResult(result.resultCode, result.data)
+    }
+
+
 
     private val settingsResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -42,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         progressBar = findViewById(R.id.progressBar)
         setupWebView()
 
-        settingsButton = findViewById(R.id.buttonSettingsEdge) // Updated ID and type
+        settingsButton = findViewById(R.id.buttonSettingsEdge)
         settingsButton.setOnClickListener {
             val intent = Intent(this, SettingsActivity::class.java)
             settingsResultLauncher.launch(intent)
@@ -69,9 +85,13 @@ class MainActivity : AppCompatActivity() {
         webView.settings.databaseEnabled = true
         webView.settings.loadWithOverviewMode = true
         webView.settings.useWideViewPort = true
+        webView.settings.allowFileAccess = true
+        webView.settings.allowContentAccess = true
+
         webView.settings.userAgentString = webView.settings.userAgentString.replace("; wv", "").replace("Version\\/\\d+\\.\\d+", "")
 
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -88,7 +108,42 @@ class MainActivity : AppCompatActivity() {
                 Log.d("WebViewConsole", "${message.message()} -- From line ${message.lineNumber()} of ${message.sourceId()}")
                 return true
             }
+
+
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                Log.d("MainActivity", "onShowFileChooser triggered")
+                // Need to cancel any pending callback before starting new request
+                this@MainActivity.filePathCallback?.onReceiveValue(null)
+                this@MainActivity.filePathCallback = filePathCallback
+
+                val intent = fileChooserParams?.createIntent()
+                if (intent == null) {
+                    Log.w("MainActivity", "File chooser intent creation failed.")
+                    this@MainActivity.filePathCallback?.onReceiveValue(null)
+                    this@MainActivity.filePathCallback = null
+                    return false
+                }
+
+
+
+                try {
+                    Log.d("MainActivity", "Launching file chooser intent.")
+                    fileChooserActivityResultLauncher.launch(intent)
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "Cannot launch file chooser", e)
+                    this@MainActivity.filePathCallback?.onReceiveValue(null)
+                    this@MainActivity.filePathCallback = null
+                    return false
+                }
+                return true // We handled the request
+            }
         }
+
+
 
         webView.webViewClient = XFilterWebViewClient { loadedWebView ->
             Log.i("MainActivity", "WebViewClient finished, applying settings.")
@@ -103,25 +158,32 @@ class MainActivity : AppCompatActivity() {
         injectJavascript(settings)
     }
 
+
     private fun injectJavascript(settings: SettingsManager.FilterSettings) {
         val flagsJson = JSONArray(settings.flagsToHide).toString()
         val wordsJson = JSONArray(settings.wordsToHide).toString()
 
+
         val debounceDelayMs = 300
+
 
         val script = """
         javascript:(function() {
+           
+
             const XFILTER_PREFIX = 'xfilter-mobile';
-            const DEBOUNCE_DELAY = ${debounceDelayMs}; 
+            const DEBOUNCE_DELAY = ${debounceDelayMs};
             let currentSettings = {};
 
             const SELECTORS = {
-                 adIndicatorContainer: '',
-                 adIndicatorText:      'span.css-1jxf684.r-bcqeeo',
-                 tweet:                  '[data-testid="tweet"]', 
+                 
+                 adIndicatorContainer: '', // Not using a specific container selector
+                 adIndicatorText:      'span.css-1jxf684.r-bcqeeo', 
+                 
+                 tweet:                  '[data-testid="tweet"]',
                  tweetUsernameWrapper:   '[data-testid="UserName"]',
                  tweetDisplayname:       '[data-testid="UserName"] span',
-                 tweetUserAvatarContainer: '.css-175oi2r.r-18kxxzh.r-1wron08.r-onrtq4.r-1awozwy',
+                 tweetUserAvatarContainer: '.css-175oi2r.r-18kxxzh.r-1wron08.r-onrtq4.r-1awozwy', // Kept for IRC
                  tweetPhoto:             '[data-testid="tweetPhoto"], [aria-label="Image"], [data-testid="testCondensedMedia"]',
                  tweetCardImage:         '[data-testid="article-cover-image"], [data-testid="card.layoutSmall.media"], [data-testid="card.layoutLarge.media"], a[href*="photo"] > div, [style*="padding-bottom: 56.25%"]',
                  tweetVideo:             '[data-testid="videoPlayer"]',
@@ -129,6 +191,7 @@ class MainActivity : AppCompatActivity() {
                  otherBadges:            'div[data-testid="User-Name"] img:not([src*="profile_images"])'
              };
 
+            
             function log(...args) { console.log("XFilter:", ...args); }
             function warn(...args) { console.warn("XFilter:", ...args); }
             function error(...args) { console.error("XFilter:", ...args); }
@@ -149,35 +212,37 @@ class MainActivity : AppCompatActivity() {
                 };
             }
 
+            
             const ircStyleTag = ensureStyleTag('xfilter-irc-style');
 
+            
             function filterSingleTweet(tweet) {
                 if (tweet.hasAttribute('data-' + XFILTER_PREFIX + '-processed') || tweet.style.display === 'none') return;
                  tweet.setAttribute('data-' + XFILTER_PREFIX + '-processed', 'true');
                  let shouldHide = false; let reason = '';
 
+                 
                  if (!shouldHide && currentSettings.filterAds) {
-                      if (SELECTORS.adIndicatorText) { 
+                      if (SELECTORS.adIndicatorText) {
                           try {
                               const adSpans = tweet.querySelectorAll(SELECTORS.adIndicatorText);
                               for (let adSpan of adSpans) {
                                   if (adSpan && (adSpan.textContent || "").trim() === 'Ad') {
                                       if (adSpan.offsetParent !== null) {
-                                          shouldHide = true;
-                                          reason = 'Ad Span Text';
-                                          log("Ad detected via text:", tweet);
-                                          break;
+                                          shouldHide = true; reason = 'Ad Span Text';
+                                          log("Ad detected via text:", tweet); break;
                                       }
                                   }
                               }
                           } catch(e) { error("Error during ad querySelectorAll:", e, "Selector:", SELECTORS.adIndicatorText); }
                       }
-                      if (!shouldHide && tweet.matches('[aria-label*="Ad"]')) {
+                      if (!shouldHide && tweet.matches('[aria-label*="Ad"]')) { // Fallback check
                            shouldHide = true; reason = 'Ad Aria Label';
                            log("Ad detected via aria-label:", tweet);
                       }
                   }
 
+                 // Flag/Word Filtering
                  if (!shouldHide && (currentSettings.flagsToHide?.length > 0 || currentSettings.wordsToHide?.length > 0)) {
                       const userNameWrapper = tweet.querySelector(SELECTORS.tweetUsernameWrapper);
                       if (userNameWrapper) {
@@ -219,7 +284,19 @@ class MainActivity : AppCompatActivity() {
                      css += ' div[data-testid="User-Name"][data-irc-preserve] ' + SELECTORS.otherBadges + ' { display: inline !important; visibility: visible !important; opacity: 1 !important; height: 1em; width: auto; }';
                  }
                  if (ircStyleTag.textContent !== css) { ircStyleTag.textContent = css; log("IRC Style Tag Updated.");}
-             }
+
+                 if (currentSettings.ircMode) {
+                      document.querySelectorAll(SELECTORS.tweet + ':not([style*="display: none"])').forEach(tweet => {
+                          if (!tweet.hasAttribute('data-' + XFILTER_PREFIX + '-hidden')) {
+                              const badges = tweet.querySelectorAll(SELECTORS.verifiedBadge + ', ' + SELECTORS.otherBadges);
+                              badges.forEach(badge => {
+                                  const parentDiv = badge.closest('div[data-testid="User-Name"]');
+                                  if (parentDiv && !parentDiv.hasAttribute('data-irc-preserve')) { parentDiv.setAttribute('data-irc-preserve', 'true'); }
+                              });
+                          }
+                      });
+                 } else { document.querySelectorAll('[data-irc-preserve]').forEach(el => el.removeAttribute('data-irc-preserve')); }
+            }
 
             function processPageChanges() {
                  runTweetFilters();
@@ -284,11 +361,46 @@ class MainActivity : AppCompatActivity() {
                   log("XFilter: Script already initialized. Re-applying settings.");
                   window.applyXFilterSettings(${flagsJson}, ${wordsJson}, ${settings.filterAds}, ${settings.ircMode});
              }
+
         })();
         """.trimIndent()
 
         webView.post { webView.evaluateJavascript(script, null) }
     }
+
+
+    private fun handleFileChooserResult(resultCode: Int, intent: Intent?) {
+        if (filePathCallback == null) {
+            Log.d("MainActivity", "handleFileChooserResult: filePathCallback is null, returning.")
+            return
+        }
+
+        var results: Array<Uri>? = null
+        if (resultCode == Activity.RESULT_OK) {
+            if (intent != null) {
+                val dataString = intent.dataString
+                val clipData = intent.clipData
+
+                if (clipData != null) {
+                    Log.d("MainActivity", "handleFileChooserResult: Handling multiple files from clipData.")
+                    results = Array(clipData.itemCount) { i ->
+                        clipData.getItemAt(i).uri
+                    }
+                } else if (dataString != null) {
+                    Log.d("MainActivity", "handleFileChooserResult: Handling single file from dataString.")
+                    results = arrayOf(Uri.parse(dataString))
+                }
+            }
+        } else {
+            Log.d("MainActivity", "handleFileChooserResult: File chooser cancelled or failed (resultCode: $resultCode)")
+        }
+
+        Log.d("MainActivity", "handleFileChooserResult: Calling onReceiveValue with ${results?.size ?: 0} URIs.")
+        filePathCallback?.onReceiveValue(results)
+        filePathCallback = null
+    }
+
+
 
     override fun onBackPressed() { if (webView.canGoBack()) { webView.goBack() } else { super.onBackPressed() } }
     override fun onSaveInstanceState(outState: Bundle) { super.onSaveInstanceState(outState); webView.saveState(outState); outState.putBoolean("webViewLoaded", isWebViewLoaded); }
