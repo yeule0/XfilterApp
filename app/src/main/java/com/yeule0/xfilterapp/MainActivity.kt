@@ -1,23 +1,26 @@
 package com.yeule0.xfilterapp
 
-
-import android.app.Activity
-import android.net.Uri
-import android.webkit.ValueCallback
-import androidx.activity.result.ActivityResult
-
-import androidx.core.view.WindowCompat
 import android.annotation.SuppressLint
+import android.app.Activity
+import android.app.DownloadManager
+import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.Environment
 import android.util.Log
 import android.view.View
+import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.widget.ImageButton
 import android.widget.ProgressBar
+import android.widget.Toast
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowCompat
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -37,8 +40,6 @@ class MainActivity : AppCompatActivity() {
         handleFileChooserResult(result.resultCode, result.data)
     }
 
-
-
     private val settingsResultLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -51,7 +52,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        WindowCompat.setDecorFitsSystemWindows(window, false)
+        WindowCompat.setDecorFitsSystemWindows(window, false) // Enable edge-to-edge
         setContentView(R.layout.activity_main)
 
         webView = findViewById(R.id.webView)
@@ -71,7 +72,6 @@ class MainActivity : AppCompatActivity() {
             Log.d("MainActivity", "onCreate: Restoring WebView state.")
             webView.restoreState(savedInstanceState)
             isWebViewLoaded = savedInstanceState.getBoolean("webViewLoaded", false)
-
             if (isWebViewLoaded) {
                 applySettingsToWebView()
             }
@@ -80,17 +80,39 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        // Basic Settings
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.databaseEnabled = true
         webView.settings.loadWithOverviewMode = true
         webView.settings.useWideViewPort = true
+
         webView.settings.allowFileAccess = true
         webView.settings.allowContentAccess = true
 
         webView.settings.userAgentString = webView.settings.userAgentString.replace("; wv", "").replace("Version\\/\\d+\\.\\d+", "")
 
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+
+
+        webView.setOnLongClickListener { view ->
+            val webView = view as WebView
+            val result = webView.hitTestResult
+            val type = result.type
+
+            if (type == WebView.HitTestResult.IMAGE_TYPE || type == WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE) {
+                val imageUrl = result.extra
+                if (!imageUrl.isNullOrBlank()) {
+                    Log.d("MainActivity", "Long-press detected on image: $imageUrl")
+                    handleImageLongPress(imageUrl)
+                    return@setOnLongClickListener true
+                } else {
+                    Log.w("MainActivity", "Long-press on image type, but URL is null or blank.")
+                }
+            }
+            return@setOnLongClickListener false
+        }
+
 
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -109,14 +131,13 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
 
-
+            // File Chooser Implementation
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
                 Log.d("MainActivity", "onShowFileChooser triggered")
-                // Need to cancel any pending callback before starting new request
                 this@MainActivity.filePathCallback?.onReceiveValue(null)
                 this@MainActivity.filePathCallback = filePathCallback
 
@@ -127,9 +148,6 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity.filePathCallback = null
                     return false
                 }
-
-
-
                 try {
                     Log.d("MainActivity", "Launching file chooser intent.")
                     fileChooserActivityResultLauncher.launch(intent)
@@ -139,10 +157,9 @@ class MainActivity : AppCompatActivity() {
                     this@MainActivity.filePathCallback = null
                     return false
                 }
-                return true // We handled the request
+                return true
             }
         }
-
 
 
         webView.webViewClient = XFilterWebViewClient { loadedWebView ->
@@ -162,8 +179,6 @@ class MainActivity : AppCompatActivity() {
     private fun injectJavascript(settings: SettingsManager.FilterSettings) {
         val flagsJson = JSONArray(settings.flagsToHide).toString()
         val wordsJson = JSONArray(settings.wordsToHide).toString()
-
-
         val debounceDelayMs = 300
 
 
@@ -368,7 +383,7 @@ class MainActivity : AppCompatActivity() {
         webView.post { webView.evaluateJavascript(script, null) }
     }
 
-
+    // File Chooser Result Handler
     private fun handleFileChooserResult(resultCode: Int, intent: Intent?) {
         if (filePathCallback == null) {
             Log.d("MainActivity", "handleFileChooserResult: filePathCallback is null, returning.")
@@ -400,6 +415,49 @@ class MainActivity : AppCompatActivity() {
         filePathCallback = null
     }
 
+
+    private fun handleImageLongPress(imageUrl: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Save Image?")
+            .setMessage("Download this image?\nURL: $imageUrl")
+            .setPositiveButton("Save") { dialog, which ->
+                startImageDownload(imageUrl)
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun startImageDownload(imageUrl: String) {
+        try {
+            val downloadManager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val uri = Uri.parse(imageUrl)
+            var fileName = uri.lastPathSegment ?: "downloaded_image_${System.currentTimeMillis()}"
+            // Basic extension guessing if missing from path segment
+            if (!fileName.contains(".")) {
+                if (imageUrl.contains(".jpg", ignoreCase = true) || imageUrl.contains(".jpeg", ignoreCase = true)) fileName += ".jpg"
+                else if (imageUrl.contains(".png", ignoreCase = true)) fileName += ".png"
+                else if (imageUrl.contains(".gif", ignoreCase = true)) fileName += ".gif"
+                else if (imageUrl.contains(".webp", ignoreCase = true)) fileName += ".webp"
+            }
+
+            val request = DownloadManager.Request(uri)
+                .setTitle("Image Download")
+                .setDescription("Downloading $fileName")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+
+            downloadManager.enqueue(request)
+            Toast.makeText(this, "Starting download...", Toast.LENGTH_SHORT).show()
+            Log.i("MainActivity", "Enqueued image download for: $imageUrl")
+
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error starting image download", e)
+            Toast.makeText(this, "Error starting download: ${e.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+    
 
 
     override fun onBackPressed() { if (webView.canGoBack()) { webView.goBack() } else { super.onBackPressed() } }
